@@ -27,18 +27,15 @@ function startOverdueTaskJob() {
   console.log("Overdue task job initialized");
 }
 
-app.use(
-  cors({
-   
-
-    origin: [
-       "http://localhost:5173",
-       "http://localhost:5174",
-       "http://localhost:5175",
-    ],
-    credentials: true,
-  })
-);
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "https://real-time-client-project-dashboard-p9z0f5hir-charan-831b.vercel.app",
+  ],
+  credentials: true,
+}));
 
 app.use(express.json());
 app.use(cookieParser());

@@ -9,6 +9,7 @@ export const initSocket = (server: any) => {
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:5175",
+     "https://real-time-client-project-dashboard-p9z0f5hir-charan-831b.vercel.app",
   ],
   credentials: true,
 },
