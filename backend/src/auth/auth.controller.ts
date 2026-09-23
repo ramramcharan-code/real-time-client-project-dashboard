@@ -10,10 +10,13 @@ const generateRefreshToken = () => {
   return crypto.randomBytes(40).toString("hex");
 };
 
+// ================= REGISTER =================
+
 export const register = async (req: Request, res: Response) => {
   try {
     const { name, email, password, role } = req.body;
 
+    // Validate fields
     if (!name || !email || !password || !role) {
       return res.status(400).json({
         success: false,
@@ -21,8 +24,23 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
+    // Only allow these roles to register
+    if (role !== "DEVELOPER" && role !== "PROJECT_MANAGER") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Only Developer or Project Manager registration is allowed",
+      });
+    }
+
+    // Normalize email
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Check existing user
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        email: normalizedEmail,
+      },
     });
 
     if (existingUser) {
@@ -32,12 +50,14 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Create user
     const user = await prisma.user.create({
       data: {
-        name,
-        email,
+        name: String(name).trim(),
+        email: normalizedEmail,
         password: hashedPassword,
         role,
       },
@@ -54,19 +74,22 @@ export const register = async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    console.error("Registration error:", error);
+    console.error("REGISTRATION ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Registration failed",
+      message: error instanceof Error ? error.message : String(error),
     });
   }
 };
+
+// ================= LOGIN =================
 
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
+    // Validate fields
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -74,9 +97,16 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
+    // Normalize email
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Find user
+    // findFirst avoids the Prisma @unique requirement on email
+   const user = await prisma.user.findUnique({
+  where: {
+    email: normalizedEmail,
+  },
+});
 
     if (!user) {
       return res.status(401).json({
@@ -85,7 +115,11 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const passwordMatch = await bcrypt.compare(password, user.password);
+    // Check password
+    const passwordMatch = await bcrypt.compare(
+      String(password),
+      user.password
+    );
 
     if (!passwordMatch) {
       return res.status(401).json({
@@ -94,7 +128,7 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    // Short-lived access token
+    // Create short-lived access token
     const accessToken = jwt.sign(
       {
         userId: user.id,
@@ -109,12 +143,14 @@ export const login = async (req: Request, res: Response) => {
     // Generate refresh token
     const refreshToken = generateRefreshToken();
 
-    // Store refresh token in database
+    // Store refresh token
     await prisma.refreshToken.create({
       data: {
         token: refreshToken,
         userId: user.id,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        expiresAt: new Date(
+          Date.now() + 7 * 24 * 60 * 60 * 1000
+        ),
       },
     });
 
@@ -138,17 +174,20 @@ export const login = async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-  console.error("LOGIN ERROR:", error);
+    console.error("LOGIN ERROR:", error);
 
-  return res.status(500).json({
-    success: false,
-    message: error instanceof Error ? error.message : String(error),
-  });
-}
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 };
+
+// ================= REFRESH TOKEN =================
+
 export const refresh = async (req: Request, res: Response) => {
   try {
-    const refreshToken = req.cookies.refreshToken;
+    const refreshToken = req.cookies?.refreshToken;
 
     if (!refreshToken) {
       return res.status(401).json({
@@ -173,6 +212,7 @@ export const refresh = async (req: Request, res: Response) => {
       });
     }
 
+    // Check expiry
     if (storedToken.expiresAt < new Date()) {
       await prisma.refreshToken.delete({
         where: {
@@ -186,6 +226,7 @@ export const refresh = async (req: Request, res: Response) => {
       });
     }
 
+    // Create new access token
     const newAccessToken = jwt.sign(
       {
         userId: storedToken.user.id,
@@ -203,11 +244,11 @@ export const refresh = async (req: Request, res: Response) => {
       accessToken: newAccessToken,
     });
   } catch (error) {
-    console.error("Refresh token error:", error);
+    console.error("REFRESH TOKEN ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to refresh access token",
+      message: error instanceof Error ? error.message : String(error),
     });
   }
 };

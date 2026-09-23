@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import { io } from "socket.io-client";
 
-const API = import.meta.env.VITE_API_URL;
+const API = "http://localhost:5000";
 
 type User = {
   id: string;
@@ -29,7 +29,6 @@ type Project = {
   id: string;
   name: string;
   description?: string;
-  tasks?: Task[];
 };
 
 type Notification = {
@@ -38,7 +37,6 @@ type Notification = {
   isRead: boolean;
   createdAt: string;
 };
-
 type Activity = {
   id: string;
   action: string;
@@ -54,7 +52,6 @@ type Activity = {
     status: string;
   };
 };
-
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -64,7 +61,17 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginMessage, setLoginMessage] = useState("");
 
+  // Register page state
+  const [showRegister, setShowRegister] = useState(false);
+  const [registerName, setRegisterName] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState("");
+  const [registerLoading, setRegisterLoading] = useState(false);
+
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskSearch, setTaskSearch] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [developers, setDevelopers] = useState<User[]>([]);
 
@@ -84,128 +91,77 @@ function App() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
-
   // Activity Feed
-  const [activities, setActivities] = useState<Activity[]>([]);
-
-  // Task Search
-  const [taskSearch, setTaskSearch] = useState("");
+const [activities, setActivities] = useState<Activity[]>([]);
+  const accessToken = sessionStorage.getItem("accessToken");
 
   // ==========================================
-  // LOAD NOTIFICATIONS
-  // ==========================================
+// LOAD NOTIFICATIONS
+// ==========================================
 
-  const loadNotifications = async () => {
-    let token = sessionStorage.getItem("accessToken");
+const loadNotifications = async () => {
+  let token = sessionStorage.getItem("accessToken");
 
-    if (!token) return;
+  if (!token) return;
 
-    try {
-      let response = await fetch(`${API}/api/notifications`, {
+  try {
+    let response = await fetch(`${API}/api/notifications`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    // Access token expired → refresh it
+    if (response.status === 401) {
+      const refreshResponse = await fetch(`${API}/api/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+
+      const refreshData = await refreshResponse.json();
+
+      if (!refreshResponse.ok || !refreshData.success) {
+        console.error("Session expired. Please login again.");
+        sessionStorage.removeItem("accessToken");
+        return;
+      }
+
+      const refreshedToken = refreshData.accessToken;
+
+      if (!refreshedToken || typeof refreshedToken !== "string") {
+        console.error("Failed to refresh access token.");
+        sessionStorage.removeItem("accessToken");
+        return;
+      }
+
+      // Save new access token
+      token = refreshedToken;
+      sessionStorage.setItem("accessToken", token);
+
+      // Retry original request
+      response = await fetch(`${API}/api/notifications`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-
-      if (response.status === 401) {
-        const refreshResponse = await fetch(
-          `${API}/api/auth/refresh`,
-          {
-            method: "POST",
-            credentials: "include",
-          }
-        );
-
-        const refreshData = await refreshResponse.json();
-
-        if (!refreshResponse.ok || !refreshData.success) {
-          console.error("Session expired. Please login again.");
-          sessionStorage.removeItem("accessToken");
-          return;
-        }
-
-        const refreshedToken = refreshData.accessToken;
-
-        if (
-          !refreshedToken ||
-          typeof refreshedToken !== "string"
-        ) {
-          console.error("Failed to refresh access token.");
-          sessionStorage.removeItem("accessToken");
-          return;
-        }
-
-        token = refreshedToken;
-        sessionStorage.setItem("accessToken", token);
-
-        response = await fetch(
-          `${API}/api/notifications`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-      }
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setNotifications(data.notifications || []);
-        setUnreadCount(data.unreadCount || 0);
-      } else {
-        console.error(
-          "Notification loading failed:",
-          data
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Failed to load notifications:",
-        error
-      );
     }
-  };
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      setNotifications(data.notifications || []);
+      setUnreadCount(data.unreadCount || 0);
+    } else {
+      console.error("Notification loading failed:", data);
+    }
+  } catch (error) {
+    console.error("Failed to load notifications:", error);
+  }
+};
 
   // ==========================================
   // MARK NOTIFICATIONS READ
   // ==========================================
-
-  const markNotificationsRead = async () => {
-    const token = sessionStorage.getItem("accessToken");
-
-    if (!token) return;
-
-    try {
-      const response = await fetch(
-        `${API}/api/notifications/read`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        setUnreadCount(0);
-
-        setNotifications((previous) =>
-          previous.map((notification) => ({
-            ...notification,
-            isRead: true,
-          }))
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Failed to mark notifications read:",
-        error
-      );
-    }
-  };
 
   // ==========================================
   // LOAD ACTIVITY FEED
@@ -217,14 +173,11 @@ function App() {
     if (!token) return;
 
     try {
-      const response = await fetch(
-        `${API}/api/activities`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const response = await fetch(`${API}/api/activities`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       const data = await response.json();
 
@@ -233,6 +186,35 @@ function App() {
       }
     } catch (error) {
       console.error("Activity loading error:", error);
+    }
+  };
+
+  const markNotificationsRead = async () => {
+    const token = sessionStorage.getItem("accessToken");
+
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API}/api/notifications/read`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setUnreadCount(0);
+        setNotifications((previous) =>
+          previous.map((notification) => ({
+            ...notification,
+            isRead: true,
+          }))
+        );
+      }
+    } catch (error) {
+      console.error("Failed to mark notifications read:", error);
     }
   };
 
@@ -246,50 +228,100 @@ function App() {
     setLoginMessage("");
 
     try {
-      const response = await fetch(
-        `${API}/api/auth/login`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            email,
-            password,
-          }),
-        }
-      );
+      const response = await fetch(`${API}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          email,
+          password,
+        }),
+      });
 
       const data = await response.json();
 
       if (!response.ok) {
-        setLoginMessage(
-          data.message || "Login failed"
-        );
+        setLoginMessage(data.message || "Login failed");
         return;
       }
 
-      sessionStorage.setItem(
-        "accessToken",
-        data.accessToken
-      );
-
-      sessionStorage.setItem(
-        "user",
-        JSON.stringify(data.user)
-      );
+      sessionStorage.setItem("accessToken", data.accessToken);
+      sessionStorage.setItem("user", JSON.stringify(data.user));
 
       setUser(data.user);
       setLoggedIn(true);
       setLoginMessage("");
 
+      // Load notifications after login
       setTimeout(() => {
         loadNotifications();
       }, 100);
     } catch (error) {
       console.error(error);
       setLoginMessage("Backend connection failed");
+    }
+  };
+
+  // ==========================================
+  // REGISTER
+  // ==========================================
+
+  const register = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisterMessage("");
+
+    if (!registerName.trim() || !registerEmail.trim() || !registerPassword) {
+      setRegisterMessage("Please fill all fields.");
+      return;
+    }
+
+    if (registerPassword.length < 6) {
+      setRegisterMessage("Password must be at least 6 characters.");
+      return;
+    }
+
+    setRegisterLoading(true);
+
+    try {
+      const response = await fetch(`${API}/api/auth/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: registerName.trim(),
+          email: registerEmail.trim().toLowerCase(),
+          password: registerPassword,
+          role: "DEVELOPER",
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setRegisterMessage(data.message || "Registration failed");
+        return;
+      }
+
+      setRegisterMessage("Account created successfully. Please login.");
+      setEmail(registerEmail.trim().toLowerCase());
+      setPassword(registerPassword);
+
+      setTimeout(() => {
+        setShowRegister(false);
+        setRegisterName("");
+        setRegisterEmail("");
+        setRegisterPassword("");
+        setRegisterMessage("");
+        setLoginMessage("Registration successful. You can now login.");
+      }, 700);
+    } catch (error) {
+      console.error(error);
+      setRegisterMessage("Backend connection failed");
+    } finally {
+      setRegisterLoading(false);
     }
   };
 
@@ -303,124 +335,82 @@ function App() {
 
     setLoggedIn(false);
     setUser(null);
-
     setTasks([]);
     setProjects([]);
-    setDevelopers([]);
     setNotifications([]);
     setUnreadCount(0);
-    setActivities([]);
-
     setShowNotifications(false);
-    setTaskSearch("");
   };
+// ==========================================
+// LOAD DEVELOPER TASKS
+// ==========================================
 
-  // ==========================================
-  // LOAD DEVELOPER TASKS
-  // ==========================================
+const loadTasks = async () => {
+  let token = sessionStorage.getItem("accessToken");
 
-  const loadTasks = async () => {
-    let token = sessionStorage.getItem("accessToken");
+  if (!token) return;
 
-    if (!token) return;
+  try {
+    let response = await fetch(`${API}/api/tasks/my`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-    try {
-      let response = await fetch(
-        `${API}/api/tasks/my`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+    // Access token expired → refresh it
+    if (response.status === 401) {
+      const refreshResponse = await fetch(`${API}/api/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
 
-      if (response.status === 401) {
-        const refreshResponse = await fetch(
-          `${API}/api/auth/refresh`,
-          {
-            method: "POST",
-            credentials: "include",
-          }
-        );
+      const refreshData = await refreshResponse.json();
+      const refreshedToken = refreshData?.accessToken;
 
-        const refreshData =
-          await refreshResponse.json();
-
-        const refreshedToken =
-          refreshData?.accessToken;
-
-        if (
-          !refreshResponse.ok ||
-          !refreshData.success ||
-          typeof refreshedToken !== "string" ||
-          !refreshedToken
-        ) {
-          console.error(
-            "Session expired. Please login again."
-          );
-
-          sessionStorage.removeItem(
-            "accessToken"
-          );
-
-          return;
-        }
-
-        token = refreshedToken;
-
-        sessionStorage.setItem(
-          "accessToken",
-          refreshedToken
-        );
-
-        response = await fetch(
-          `${API}/api/tasks/my`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
+      if (!refreshResponse.ok || !refreshData.success || typeof refreshedToken !== "string" || !refreshedToken) {
+        console.error("Session expired. Please login again.");
+        sessionStorage.removeItem("accessToken");
+        return;
       }
 
-      const data = await response.json();
+      // Save new access token
+      token = refreshedToken;
+      sessionStorage.setItem("accessToken", refreshedToken);
 
-      if (response.ok) {
-        setTasks(data.tasks || []);
-      } else {
-        console.error(
-          "Task loading failed:",
-          data
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Task loading error:",
-        error
-      );
+      // Retry original request
+      response = await fetch(`${API}/api/tasks/my`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
     }
-  };
 
+    const data = await response.json();
+
+    if (response.ok) {
+      setTasks(data.tasks || []);
+    } else {
+      console.error("Task loading failed:", data);
+    }
+  } catch (error) {
+    console.error("Task loading error:", error);
+  }
+};
   // ==========================================
   // LOAD PROJECTS
   // ==========================================
 
   const loadProjects = async () => {
-    const token = sessionStorage.getItem(
-      "accessToken"
-    );
+    const token = sessionStorage.getItem("accessToken");
 
     if (!token) return;
 
     try {
-      const response = await fetch(
-        `${API}/api/projects`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const response = await fetch(`${API}/api/projects`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       const data = await response.json();
 
@@ -430,10 +420,7 @@ function App() {
         setProjects(data.projects || []);
       }
     } catch (error) {
-      console.error(
-        "Project loading error:",
-        error
-      );
+      console.error("Project loading error:", error);
     }
   };
 
@@ -442,21 +429,16 @@ function App() {
   // ==========================================
 
   const loadDevelopers = async () => {
-    const token = sessionStorage.getItem(
-      "accessToken"
-    );
+    const token = sessionStorage.getItem("accessToken");
 
     if (!token) return;
 
     try {
-      const response = await fetch(
-        `${API}/api/users/developers`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const response = await fetch(`${API}/api/users/developers`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       const data = await response.json();
 
@@ -465,14 +447,25 @@ function App() {
         return;
       }
 
-      setDevelopers([]);
+      setDevelopers([
+        {
+          id: "cmtz8kkek000048tugw7j3fim",
+          name: "Developer One",
+          email: "developer1@test.com",
+          role: "DEVELOPER",
+        },
+      ]);
     } catch (error) {
-      console.error(
-        "Developer loading error:",
-        error
-      );
+      console.error("Developer loading error:", error);
 
-      setDevelopers([]);
+      setDevelopers([
+        {
+          id: "cmtz8kkek000048tugw7j3fim",
+          name: "Developer One",
+          email: "developer1@test.com",
+          role: "DEVELOPER",
+        },
+      ]);
     }
   };
 
@@ -480,14 +473,10 @@ function App() {
   // CREATE PROJECT
   // ==========================================
 
-  const createProject = async (
-    e: React.FormEvent
-  ) => {
+  const createProject = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const token = sessionStorage.getItem(
-      "accessToken"
-    );
+    const token = sessionStorage.getItem("accessToken");
 
     if (!token) return;
 
@@ -497,28 +486,22 @@ function App() {
     }
 
     try {
-      const response = await fetch(
-        `${API}/api/projects`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            name: projectName,
-            description: projectDescription,
-          }),
-        }
-      );
+      const response = await fetch(`${API}/api/projects`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: projectName,
+          description: projectDescription,
+        }),
+      });
 
       const data = await response.json();
 
       if (!response.ok) {
-        alert(
-          data.message ||
-            "Project creation failed"
-        );
+        alert(data.message || "Project creation failed");
         return;
       }
 
@@ -538,55 +521,39 @@ function App() {
   // CREATE TASK
   // ==========================================
 
-  const createTask = async (
-    e: React.FormEvent
-  ) => {
+  const createTask = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const token = sessionStorage.getItem(
-      "accessToken"
-    );
+    const token = sessionStorage.getItem("accessToken");
 
     if (!token) return;
 
-    if (
-      !taskTitle ||
-      !selectedProject ||
-      !selectedDeveloper
-    ) {
-      alert(
-        "Please fill Task, Project and Developer"
-      );
+    if (!taskTitle || !selectedProject || !selectedDeveloper) {
+      alert("Please fill Task, Project and Developer");
       return;
     }
 
     try {
-      const response = await fetch(
-        `${API}/api/tasks`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            title: taskTitle,
-            description: taskDescription,
-            projectId: selectedProject,
-            developerId: selectedDeveloper,
-            priority,
-            dueDate: dueDate || null,
-          }),
-        }
-      );
+      const response = await fetch(`${API}/api/tasks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: taskTitle,
+          description: taskDescription,
+          projectId: selectedProject,
+          developerId: selectedDeveloper,
+          priority,
+          dueDate: dueDate || null,
+        }),
+      });
 
       const data = await response.json();
 
       if (!response.ok) {
-        alert(
-          data.message ||
-            "Task creation failed"
-        );
+        alert(data.message || "Task creation failed");
         return;
       }
 
@@ -614,9 +581,7 @@ function App() {
     taskId: string,
     status: string
   ) => {
-    const token = sessionStorage.getItem(
-      "accessToken"
-    );
+    const token = sessionStorage.getItem("accessToken");
 
     if (!token) return;
 
@@ -638,23 +603,14 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        alert(
-          data.message ||
-            "Status update failed"
-        );
+        alert(data.message || "Status update failed");
         return;
       }
 
-      setMessage(
-        "Task status updated successfully!"
-      );
+      setMessage("Task status updated successfully!");
 
       loadTasks();
       loadNotifications();
-
-      setTimeout(() => {
-        setMessage("");
-      }, 2500);
     } catch (error) {
       console.error(error);
     }
@@ -665,34 +621,15 @@ function App() {
   // ==========================================
 
   useEffect(() => {
-    const savedUser =
-      sessionStorage.getItem("user");
+    const savedUser = sessionStorage.getItem("user");
 
-    const savedToken =
-      sessionStorage.getItem(
-        "accessToken"
-      );
+    if (savedUser && accessToken) {
+      const parsedUser = JSON.parse(savedUser);
 
-    if (savedUser && savedToken) {
-      try {
-        const parsedUser =
-          JSON.parse(savedUser);
-
-        setUser(parsedUser);
-        setLoggedIn(true);
-      } catch (error) {
-        console.error(
-          "Saved user data error:",
-          error
-        );
-
-        sessionStorage.removeItem("user");
-        sessionStorage.removeItem(
-          "accessToken"
-        );
-      }
+      setUser(parsedUser);
+      setLoggedIn(true);
     }
-  }, []);
+  }, [accessToken]);
 
   // ==========================================
   // LOAD DATA
@@ -708,106 +645,146 @@ function App() {
     }
 
     if (
-      user.role === "PROJECT_MANAGER" ||
-      user.role === "ADMIN"
-    ) {
-      loadProjects();
-      loadDevelopers();
-      loadActivities();
-    }
+  user.role === "PROJECT_MANAGER" ||
+  user.role === "ADMIN"
+) {
+  loadProjects();
+  loadDevelopers();
+  loadActivities();
+}
   }, [loggedIn, user]);
 
   // ==========================================
   // SOCKET.IO
   // ==========================================
+useEffect(() => {
+  if (!loggedIn) return;
 
-  useEffect(() => {
-    if (!loggedIn) return;
+  const socket = io(API, {
+    withCredentials: true,
+  });
 
-    const socket = io(API, {
-      withCredentials: true,
-    });
+  socket.on("connect", () => {
+    console.log("Socket connected:", socket.id);
+  });
 
-    socket.on("connect", () => {
-      console.log(
-        "Socket connected:",
-        socket.id
-      );
-    });
+  socket.on("welcome", (data) => {
+    console.log("Welcome event:", data);
+  });
 
-    socket.on("welcome", (data) => {
-      console.log(
-        "Welcome event:",
-        data
-      );
-    });
+  socket.on("taskStatusUpdated", (data) => {
+    console.log("🔥 LIVE TASK UPDATE:", data);
 
-    socket.on(
-      "taskStatusUpdated",
-      (data) => {
-        console.log(
-          "🔥 LIVE TASK UPDATE:",
-          data
-        );
+    if (user?.role === "DEVELOPER") {
+      loadTasks();
+      loadNotifications();
+    }
 
-        if (
-          user?.role === "DEVELOPER"
-        ) {
-          loadTasks();
-          loadNotifications();
-        }
+    if (
+      user?.role === "PROJECT_MANAGER" ||
+      user?.role === "ADMIN"
+    ) {
+      loadActivities();
+    }
+  });
+  socket.on("newNotification", (data) => {
+  console.log("🔔 LIVE NOTIFICATION:", data);
 
-        if (
-          user?.role ===
-            "PROJECT_MANAGER" ||
-          user?.role === "ADMIN"
-        ) {
-          loadActivities();
-          loadProjects();
-        }
-      }
-    );
+  if (
+    user?.role === "DEVELOPER" &&
+    data.userId === user.id
+  ) {
+    loadNotifications();
+  }
+});
 
-    socket.on(
-      "newNotification",
-      (data) => {
-        console.log(
-          "🔔 LIVE NOTIFICATION:",
-          data
-        );
+  socket.on("disconnect", () => {
+    console.log("Socket disconnected");
+  });
 
-        if (
-          user?.role === "DEVELOPER" &&
-          data.userId === user.id
-        ) {
-          loadNotifications();
-        }
-      }
-    );
-
-    socket.on("disconnect", () => {
-      console.log(
-        "Socket disconnected"
-      );
-    });
-
-    return () => {
-      socket.off("connect");
-      socket.off("welcome");
-      socket.off(
-        "taskStatusUpdated"
-      );
-      socket.off(
-        "newNotification"
-      );
-      socket.off("disconnect");
-      socket.disconnect();
-    };
-  }, [loggedIn, user]);
+  return () => {
+    socket.off("connect");
+    socket.off("welcome");
+    socket.off("taskStatusUpdated");
+     socket.off("newNotification");
+    socket.off("disconnect");
+    socket.disconnect();
+  };
+}, [loggedIn, user]);
 
   // ==========================================
   // LOGIN PAGE
   // ==========================================
+
+  if (!loggedIn && showRegister) {
+    return (
+      <div className="login-page register-page">
+        <div className="login-card register-card">
+          <div className="register-brand">🚀</div>
+          <h1>Create Account</h1>
+          <p className="login-subtitle">Join the Client Dashboard practice project</p>
+
+          <div className="selected-role">👨‍💻 Registering as Developer</div>
+
+          <form onSubmit={register}>
+            <input
+              type="text"
+              placeholder="Full name"
+              value={registerName}
+              onChange={(e) => setRegisterName(e.target.value)}
+              autoComplete="name"
+            />
+
+            <input
+              type="email"
+              placeholder="Email address"
+              value={registerEmail}
+              onChange={(e) => setRegisterEmail(e.target.value)}
+              autoComplete="email"
+            />
+
+            <div className="password-box">
+  <input
+    type={showRegisterPassword ? "text" : "password"}
+    placeholder="Password"
+    value={registerPassword}
+    onChange={(e) => setRegisterPassword(e.target.value)}
+  />
+
+  <button
+    type="button"
+    className="password-toggle"
+    onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+  >
+    {showRegisterPassword ? "🙈" : "👁️"}
+  </button>
+</div>
+
+            <button type="submit" className="login-button register-submit" disabled={registerLoading}>
+              {registerLoading ? "Creating account..." : "Create Account"}
+            </button>
+          </form>
+
+          {registerMessage && (
+            <p className={`register-message ${registerMessage.includes("successfully") ? "register-success" : "error-message"}`}>
+              {registerMessage}
+            </p>
+          )}
+
+          <button
+            type="button"
+            className="back-button"
+            onClick={() => {
+              setShowRegister(false);
+              setRegisterMessage("");
+            }}
+          >
+            ← Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!loggedIn) {
     return (
@@ -824,39 +801,25 @@ function App() {
               type="email"
               placeholder="Email"
               value={email}
-              onChange={(e) =>
-                setEmail(e.target.value)
-              }
+              onChange={(e) => setEmail(e.target.value)}
             />
 
             <div className="password-box">
               <input
-                type={
-                  showPassword
-                    ? "text"
-                    : "password"
-                }
+                type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
-                onChange={(e) =>
-                  setPassword(
-                    e.target.value
-                  )
-                }
+                onChange={(e) => setPassword(e.target.value)}
               />
 
               <button
                 type="button"
                 className="password-toggle"
                 onClick={() =>
-                  setShowPassword(
-                    !showPassword
-                  )
+                  setShowPassword(!showPassword)
                 }
               >
-                {showPassword
-                  ? "🙈"
-                  : "👁️"}
+                {showPassword ? "🙈" : "👁️"}
               </button>
             </div>
 
@@ -878,18 +841,29 @@ function App() {
             <p>Practice Accounts</p>
 
             <small>
-              Developer:
-              developer1@test.com
+              Developer: developer1@test.com
             </small>
 
             <small>
-              Manager:
-              manager2@test.com
+              Manager: manager2@test.com
             </small>
 
             <small>
               Password: Test@12345
             </small>
+          </div>
+
+          <div className="register-link">
+            <span>New here? </span>
+            <button
+              type="button"
+              onClick={() => {
+                setShowRegister(true);
+                setLoginMessage("");
+              }}
+            >
+              Create an account
+            </button>
           </div>
         </div>
       </div>
@@ -901,419 +875,189 @@ function App() {
   // ==========================================
 
   if (user?.role === "DEVELOPER") {
-    const completed = tasks.filter(
-      (task) =>
-        task.status === "DONE"
-    ).length;
-
-    const inProgress = tasks.filter(
-      (task) =>
-        task.status === "IN_PROGRESS"
-    ).length;
-
-    const todo = tasks.filter(
-      (task) =>
-        task.status === "TODO"
-    ).length;
-
-    const inReview = tasks.filter(
-      (task) =>
-        task.status === "IN_REVIEW"
-    ).length;
-
+    const completed = tasks.filter((task) => task.status === "DONE").length;
+    const inProgress = tasks.filter((task) => task.status === "IN_PROGRESS").length;
+    const todo = tasks.filter((task) => task.status === "TODO").length;
+    const inReview = tasks.filter((task) => task.status === "IN_REVIEW").length;
     const overdueCount = tasks.filter(
       (task) =>
-        task.dueDate &&
-        new Date(task.dueDate) <
-          new Date() &&
+        Boolean(task.dueDate) &&
+        new Date(task.dueDate as string) < new Date() &&
         task.status !== "DONE"
     ).length;
 
-    const uniqueProjects =
-      Array.from(
-        new Map(
-          tasks
-            .filter(
-              (task) => task.project
-            )
-            .map((task) => [
-              task.project?.id,
-              task.project,
-            ])
-        ).values()
+    const uniqueProjects = Array.from(
+      new Map(
+        tasks
+          .filter((task) => task.project)
+          .map((task) => [task.project?.id, task.project])
+      ).values()
+    );
+
+    const filteredTasks = tasks.filter((task) => {
+      const search = taskSearch.trim().toLowerCase();
+      if (!search) return true;
+      return (
+        task.title.toLowerCase().includes(search) ||
+        (task.description || "").toLowerCase().includes(search) ||
+        (task.project?.name || "").toLowerCase().includes(search) ||
+        task.priority.toLowerCase().includes(search) ||
+        task.status.toLowerCase().includes(search)
       );
-
-    // SEARCH TASKS / PROJECTS
-    const filteredTasks =
-      tasks.filter((task) => {
-        const search =
-          taskSearch.toLowerCase();
-
-        return (
-          task.title
-            .toLowerCase()
-            .includes(search) ||
-          (
-            task.project?.name || ""
-          )
-            .toLowerCase()
-            .includes(search)
-        );
-      });
+    });
 
     return (
       <div className="dashboard">
         <header className="topbar">
           <div>
             <h1>Client Dashboard</h1>
-
-            <p>
-              Welcome, {user.name}
-            </p>
+            <p>Welcome, {user.name}</p>
           </div>
 
           <div className="topbar-actions">
-            {/* NOTIFICATIONS */}
             <div className="notification-wrapper">
               <button
                 className="notification-button"
                 onClick={() => {
-                  const nextState =
-                    !showNotifications;
-
-                  setShowNotifications(
-                    nextState
-                  );
-
-                  if (nextState) {
-                    markNotificationsRead();
-                  }
+                  const nextState = !showNotifications;
+                  setShowNotifications(nextState);
+                  if (nextState && unreadCount > 0) markNotificationsRead();
                 }}
                 aria-label="Notifications"
               >
                 🔔
-
                 {unreadCount > 0 && (
-                  <span className="notification-count">
-                    {unreadCount}
-                  </span>
+                  <span className="notification-count">{unreadCount}</span>
                 )}
               </button>
 
               {showNotifications && (
                 <div className="notification-panel">
                   <div className="notification-panel-header">
-                    <h3>
-                      Notifications
-                    </h3>
-
-                    {notifications.length >
-                      0 && (
-                      <button
-                        onClick={
-                          markNotificationsRead
-                        }
-                      >
-                        Mark read
-                      </button>
+                    <h3>Notifications</h3>
+                    {notifications.length > 0 && (
+                      <button onClick={markNotificationsRead}>Mark read</button>
                     )}
                   </div>
 
-                  {notifications.length ===
-                  0 ? (
-                    <p className="no-notifications">
-                      No notifications
-                    </p>
+                  {notifications.length === 0 ? (
+                    <p className="no-notifications">No notifications</p>
                   ) : (
-                    notifications.map(
-                      (notification) => (
-                        <div
-                          className={`notification-item ${
-                            !notification.isRead
-                              ? "unread"
-                              : ""
-                          }`}
-                          key={
-                            notification.id
-                          }
-                        >
-                          <p>
-                            {
-                              notification.message
-                            }
-                          </p>
-
-                          <small>
-                            {new Date(
-                              notification.createdAt
-                            ).toLocaleString()}
-                          </small>
-                        </div>
-                      )
-                    )
+                    notifications.map((notification) => (
+                      <div
+                        className={`notification-item ${!notification.isRead ? "unread" : ""}`}
+                        key={notification.id}
+                      >
+                        <p>{notification.message}</p>
+                        <small>{new Date(notification.createdAt).toLocaleString()}</small>
+                      </div>
+                    ))
                   )}
                 </div>
               )}
             </div>
 
-            <button
-              className="logout"
-              onClick={logout}
-            >
-              Logout
-            </button>
+            <button className="logout" onClick={logout}>Logout</button>
           </div>
         </header>
 
         <main className="content">
-          {/* DASHBOARD SUMMARY */}
           <section className="summary-grid">
-            <div className="summary-card">
-              <h3>Projects</h3>
-              <p>
-                {uniqueProjects.length}
-              </p>
-            </div>
-
-            <div className="summary-card">
-              <h3>Total Tasks</h3>
-              <p>{tasks.length}</p>
-            </div>
-
-            <div className="summary-card">
-              <h3>Overdue</h3>
-              <p>{overdueCount}</p>
-            </div>
+            <div className="summary-card"><h3>Projects</h3><p>{uniqueProjects.length}</p></div>
+            <div className="summary-card"><h3>Total Tasks</h3><p>{tasks.length}</p></div>
+            <div className="summary-card"><h3>To Do</h3><p>{todo}</p></div>
+            <div className="summary-card"><h3>In Progress</h3><p>{inProgress}</p></div>
+            <div className="summary-card"><h3>In Review</h3><p>{inReview}</p></div>
+            <div className="summary-card"><h3>Completed</h3><p>{completed}</p></div>
+            <div className="summary-card overdue-summary"><h3>Overdue</h3><p>{overdueCount}</p></div>
           </section>
 
-          {/* STATUS SUMMARY */}
-          <div className="stats">
-            <div className="stat-card">
-              <h3>Total Tasks</h3>
-              <strong>
-                {tasks.length}
-              </strong>
-            </div>
-
-            <div className="stat-card">
-              <h3>To Do</h3>
-              <strong>{todo}</strong>
-            </div>
-
-            <div className="stat-card">
-              <h3>In Progress</h3>
-              <strong>
-                {inProgress}
-              </strong>
-            </div>
-
-            <div className="stat-card">
-              <h3>In Review</h3>
-              <strong>{inReview}</strong>
-            </div>
-
-            <div className="stat-card">
-              <h3>Completed</h3>
-              <strong>
-                {completed}
-              </strong>
-            </div>
-          </div>
-
-          {/* MY PROJECTS */}
           <section className="project-section">
             <h2>📁 My Projects</h2>
-
-            {uniqueProjects.length ===
-            0 ? (
-              <p>
-                No projects assigned yet.
-              </p>
+            {uniqueProjects.length === 0 ? (
+              <p className="empty-state">No projects assigned yet.</p>
             ) : (
               <div className="project-grid">
-                {uniqueProjects.map(
-                  (project) => (
-                    <div
-                      className="project-card"
-                      key={project?.id}
-                    >
-                      <h3>
-                        {project?.name}
-                      </h3>
-
-                      <p>
-                        {project?.description ||
-                          "No project description"}
-                      </p>
-
-                      <span>
-                        Tasks:{" "}
-                        {
-                          tasks.filter(
-                            (task) =>
-                              task.project
-                                ?.id ===
-                              project?.id
-                          ).length
-                        }
-                      </span>
-                    </div>
-                  )
-                )}
+                {uniqueProjects.map((project) => (
+                  <div className="project-card" key={project?.id}>
+                    <h3>{project?.name}</h3>
+                    <p>{project?.description || "No project description"}</p>
+                    <span>Tasks: {tasks.filter((task) => task.project?.id === project?.id).length}</span>
+                  </div>
+                ))}
               </div>
             )}
           </section>
 
-          {/* MY TASKS */}
           <section className="task-section">
-            <h2>My Tasks</h2>
+            <h2>📋 My Tasks</h2>
 
-            {message && (
-              <p className="success-message">
-                {message}
-              </p>
-            )}
+            {message && <p className="success-message">{message}</p>}
 
-            {/* SEARCH */}
-            <input
-              type="text"
-              className="task-search"
-              placeholder="🔍 Search tasks or projects..."
-              value={taskSearch}
-              onChange={(e) =>
-                setTaskSearch(
-                  e.target.value
-                )
-              }
-            />
-
-            <div className="task-grid">
-              {filteredTasks.length ===
-              0 ? (
-                <p>
-                  {tasks.length === 0
-                    ? "No tasks assigned."
-                    : "No tasks found."}
-                </p>
-              ) : (
-                filteredTasks.map(
-                  (task) => {
-                    const isOverdue =
-                      !!task.dueDate &&
-                      new Date(
-                        task.dueDate
-                      ) < new Date() &&
-                      task.status !== "DONE";
-
-                    return (
-                      <div
-                        className={`task-card ${
-                          isOverdue
-                            ? "task-overdue"
-                            : ""
-                        }`}
-                        key={task.id}
-                      >
-                        {/* OVERDUE */}
-                        {isOverdue && (
-                          <div className="overdue-badge">
-                            ⚠️ OVERDUE
-                          </div>
-                        )}
-
-                        <div className="task-header">
-                          <h3>
-                            {task.title}
-                          </h3>
-
-                          <span
-                            className={`status ${task.status}`}
-                          >
-                            {task.status ===
-                            "TODO"
-                              ? "To Do"
-                              : task.status ===
-                                "IN_PROGRESS"
-                              ? "In Progress"
-                              : task.status ===
-                                "IN_REVIEW"
-                              ? "In Review"
-                              : task.status ===
-                                "DONE"
-                              ? "Completed"
-                              : task.status}
-                          </span>
-                        </div>
-
-                        <p>
-                          {task.description ||
-                            "No description"}
-                        </p>
-
-                        <div className="task-info">
-                          {/* PRIORITY */}
-                          <span
-                            className={`priority priority-${task.priority}`}
-                          >
-                            Priority:{" "}
-                            {task.priority}
-                          </span>
-
-                          {/* PROJECT */}
-                          <span>
-                            Project:{" "}
-                            {task.project
-                              ?.name ||
-                              "Unknown"}
-                          </span>
-
-                          {/* DUE DATE */}
-                          {task.dueDate && (
-                            <span>
-                              Due:{" "}
-                              {new Date(
-                                task.dueDate
-                              ).toLocaleDateString(
-                                "en-GB"
-                              )}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* STATUS UPDATE */}
-                        <select
-                          value={
-                            task.status
-                          }
-                          onChange={(e) =>
-                            updateTaskStatus(
-                              task.id,
-                              e.target.value
-                            )
-                          }
-                        >
-                          <option value="TODO">
-                            To Do
-                          </option>
-
-                          <option value="IN_PROGRESS">
-                            In Progress
-                          </option>
-
-                          <option value="IN_REVIEW">
-                            In Review
-                          </option>
-
-                          <option value="DONE">
-                            Completed
-                          </option>
-                        </select>
-                      </div>
-                    );
-                  }
-                )
-              )}
+            <div className="task-search-wrapper">
+              <input
+                type="search"
+                className="task-search"
+                placeholder="Search tasks, projects, status or priority..."
+                value={taskSearch}
+                onChange={(e) => setTaskSearch(e.target.value)}
+              />
             </div>
+
+            {tasks.length === 0 ? (
+              <div className="empty-state"><span>📋</span><p>No tasks assigned.</p></div>
+            ) : filteredTasks.length === 0 ? (
+              <div className="empty-state"><span>🔍</span><p>No tasks match your search.</p></div>
+            ) : (
+              <div className="task-grid">
+                {filteredTasks.map((task) => {
+                  const isOverdue =
+                    Boolean(task.dueDate) &&
+                    new Date(task.dueDate as string) < new Date() &&
+                    task.status !== "DONE";
+
+                  return (
+                    <div
+                      className={`task-card ${isOverdue ? "task-overdue" : ""}`}
+                      key={task.id}
+                    >
+                      {isOverdue && <div className="overdue-badge">⚠️ OVERDUE</div>}
+
+                      <div className="task-header">
+                        <h3>{task.title}</h3>
+                        <span className={`status ${task.status}`}>
+                          {task.status.replace("_", " ")}
+                        </span>
+                      </div>
+
+                      {task.description && <p>{task.description}</p>}
+
+                      <div className="task-info">
+                        <span className={`priority priority-${task.priority}`}>
+                          Priority: {task.priority}
+                        </span>
+                        <span>Project: {task.project?.name || "Unknown"}</span>
+                        {task.dueDate && (
+                          <span>
+                            Due: {new Date(task.dueDate).toLocaleDateString("en-GB")}
+                          </span>
+                        )}
+                      </div>
+
+                      <select
+                        value={task.status}
+                        onChange={(e) => updateTaskStatus(task.id, e.target.value)}
+                      >
+                        <option value="TODO">To Do</option>
+                        <option value="IN_PROGRESS">In Progress</option>
+                        <option value="IN_REVIEW">In Review</option>
+                        <option value="DONE">Completed</option>
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </main>
       </div>
@@ -1328,11 +1072,7 @@ function App() {
     <div className="dashboard">
       <header className="topbar">
         <div>
-          <h1>
-            {user?.role === "ADMIN"
-              ? "Admin Dashboard"
-              : "Manager Dashboard"}
-          </h1>
+          <h1>Manager Dashboard</h1>
 
           <p>
             Welcome, {user?.name}
@@ -1348,57 +1088,23 @@ function App() {
       </header>
 
       <main className="content">
-        {/* DASHBOARD SUMMARY */}
-        <section className="summary-grid">
-          <div className="summary-card">
-            <h3>Projects</h3>
-            <p>{projects.length}</p>
-          </div>
-
-          <div className="summary-card">
-            <h3>Developers</h3>
-            <p>
-              {developers.length}
-            </p>
-          </div>
-
-          <div className="summary-card">
-            <h3>Total Tasks</h3>
-            <p>
-              {projects.reduce(
-                (total, project) =>
-                  total +
-                  (project.tasks
-                    ?.length || 0),
-                0
-              )}
-            </p>
-          </div>
-        </section>
-
         {/* CREATE PROJECT */}
         <section className="form-section">
           <h2>Create Project</h2>
 
-          <form
-            onSubmit={createProject}
-          >
+          <form onSubmit={createProject}>
             <input
               type="text"
               placeholder="Project Name"
               value={projectName}
               onChange={(e) =>
-                setProjectName(
-                  e.target.value
-                )
+                setProjectName(e.target.value)
               }
             />
 
             <textarea
               placeholder="Project Description"
-              value={
-                projectDescription
-              }
+              value={projectDescription}
               onChange={(e) =>
                 setProjectDescription(
                   e.target.value
@@ -1422,9 +1128,7 @@ function App() {
               placeholder="Task Title"
               value={taskTitle}
               onChange={(e) =>
-                setTaskTitle(
-                  e.target.value
-                )
+                setTaskTitle(e.target.value)
               }
             />
 
@@ -1450,22 +1154,18 @@ function App() {
                 Select Project
               </option>
 
-              {projects.map(
-                (project) => (
-                  <option
-                    key={project.id}
-                    value={project.id}
-                  >
-                    {project.name}
-                  </option>
-                )
-              )}
+              {projects.map((project) => (
+                <option
+                  key={project.id}
+                  value={project.id}
+                >
+                  {project.name}
+                </option>
+              ))}
             </select>
 
             <select
-              value={
-                selectedDeveloper
-              }
+              value={selectedDeveloper}
               onChange={(e) =>
                 setSelectedDeveloper(
                   e.target.value
@@ -1476,39 +1176,28 @@ function App() {
                 Select Developer
               </option>
 
-              {developers.map(
-                (developer) => (
-                  <option
-                    key={developer.id}
-                    value={developer.id}
-                  >
-                    {developer.name} (
-                    {developer.email})
-                  </option>
-                )
-              )}
+              {developers.map((developer) => (
+                <option
+                  key={developer.id}
+                  value={developer.id}
+                >
+                  {developer.name} (
+                  {developer.email})
+                </option>
+              ))}
             </select>
 
             <select
               value={priority}
               onChange={(e) =>
-                setPriority(
-                  e.target.value
-                )
+                setPriority(e.target.value)
               }
             >
-              <option value="LOW">
-                LOW
-              </option>
-
+              <option value="LOW">LOW</option>
               <option value="MEDIUM">
                 MEDIUM
               </option>
-
-              <option value="HIGH">
-                HIGH
-              </option>
-
+              <option value="HIGH">HIGH</option>
               <option value="CRITICAL">
                 CRITICAL
               </option>
@@ -1516,11 +1205,10 @@ function App() {
 
             <input
               type="date"
+              placeholder="DD/MM/YYYY"
               value={dueDate}
               onChange={(e) =>
-                setDueDate(
-                  e.target.value
-                )
+                setDueDate(e.target.value)
               }
             />
 
@@ -1530,105 +1218,83 @@ function App() {
           </form>
         </section>
 
+        {/* MY PROJECTS */}
+        
         {/* LIVE ACTIVITY FEED */}
-        <section className="activity-section">
-          <div className="activity-header">
-            <div>
-              <h2>
-                ⚡ Live Activity Feed
-              </h2>
+<section className="activity-section">
+  <div className="activity-header">
+    <div>
+      <h2>⚡ Live Activity Feed</h2>
+      <p>Recent project activity</p>
+    </div>
 
-              <p>
-                Recent project activity
-              </p>
-            </div>
+    <button
+      className="activity-refresh"
+      onClick={loadActivities}
+    >
+      Refresh
+    </button>
+  </div>
 
-            <button
-              className="activity-refresh"
-              onClick={loadActivities}
-            >
-              Refresh
-            </button>
+  {activities.length === 0 ? (
+    <p className="no-activities">
+      No recent activity.
+    </p>
+  ) : (
+    <div className="activity-list">
+      {activities.map((activity) => (
+        <div
+          className="activity-item"
+          key={activity.id}
+        >
+          <div className="activity-icon">
+            ⚡
           </div>
 
-          {activities.length ===
-          0 ? (
-            <p className="no-activities">
-              No recent activity.
-            </p>
-          ) : (
-            <div className="activity-list">
-              {activities.map(
-                (activity) => (
-                  <div
-                    className="activity-item"
-                    key={activity.id}
-                  >
-                    <div className="activity-icon">
-                      ⚡
-                    </div>
+          <div className="activity-content">
+            <strong>
+              {activity.user.name}
+            </strong>
 
-                    <div className="activity-content">
-                      <strong>
-                        {
-                          activity.user
-                            .name
-                        }
-                      </strong>
+            <p>{activity.action}</p>
 
-                      <p>
-                        {activity.action}
-                      </p>
+            {activity.task && (
+              <span className="activity-task">
+                Task: {activity.task.title}
+              </span>
+            )}
 
-                      {activity.task && (
-                        <span className="activity-task">
-                          Task:{" "}
-                          {
-                            activity.task
-                              .title
-                          }
-                        </span>
-                      )}
-
-                      <small>
-                        {new Date(
-                          activity.createdAt
-                        ).toLocaleString()}
-                      </small>
-                    </div>
-                  </div>
-                )
-              )}
-            </div>
-          )}
-        </section>
-
-        {/* MY PROJECTS */}
+            <small>
+              {new Date(
+                activity.createdAt
+              ).toLocaleString()}
+            </small>
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+</section>
         <section className="task-section">
           <h2>My Projects</h2>
 
-          {projects.length ===
-          0 ? (
+          {projects.length === 0 ? (
             <p>No projects found.</p>
           ) : (
             <div className="task-grid">
-              {projects.map(
-                (project) => (
-                  <div
-                    className="task-card"
-                    key={project.id}
-                  >
-                    <h3>
-                      {project.name}
-                    </h3>
+              {projects.map((project) => (
+                <div
+                  className="task-card"
+                  key={project.id}
+                >
+                  <h3>{project.name}</h3>
 
-                    <p>
-                      {project.description ||
-                        "No description"}
-                    </p>
-                  </div>
-                )
-              )}
+                  <p>
+                    {project.description ||
+                      "No description"}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
         </section>

@@ -32,7 +32,7 @@ app.use(cors({
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:5175",
-    "https://real-time-client-project-dashboard-p9z0f5hir-charan-831b.vercel.app",
+    "https://real-time-client-project-dashboard-mu.vercel.app",
   ],
   credentials: true,
 }));
