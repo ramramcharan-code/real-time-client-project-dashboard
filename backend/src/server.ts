@@ -26,13 +26,13 @@ const PORT = process.env.PORT || 5000;
 function startOverdueTaskJob() {
   console.log("Overdue task job initialized");
 }
-
 app.use(cors({
   origin: [
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:5175",
     "https://real-time-client-project-dashboard-mu.vercel.app",
+    "https://real-time-client-project-dashboard-production.up.railway.app",
   ],
   credentials: true,
 }));
