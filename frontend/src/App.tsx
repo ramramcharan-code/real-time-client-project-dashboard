@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 import { io } from "socket.io-client";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
-
+const API = "https://real-time-client-project-dashboard-uc85.onrender.com";
 type User = {
   id: string;
   name: string;
