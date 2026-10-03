@@ -21,7 +21,7 @@ import userRoutes from "./users/user.routes";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 function startOverdueTaskJob() {
   console.log("Overdue task job initialized");
@@ -144,9 +144,8 @@ app.get(
     });
   }
 );
-const httpServer = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const httpServer = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+  initSocket(httpServer);
   startOverdueTaskJob();
 });
-
-initSocket(httpServer);
